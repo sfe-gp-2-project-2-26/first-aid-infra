@@ -11,7 +11,6 @@ env:
   ECS_CLUSTER: medaid-prod-cluster
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
@@ -25,10 +24,11 @@ jobs:
           repository: sfe-gp-2-project-2-26/first-aid-frontend
           ref: main
 
-      - name: Configure AWS credentials via OIDC
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::500345929632:role/github-actions-deploy
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -50,6 +50,7 @@ jobs:
     name: Build & Deploy Backend Services
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         service: [auth-service, ai-service, map-service, bge-service]
     steps:
@@ -59,10 +60,11 @@ jobs:
           repository: sfe-gp-2-project-2-26/first-aid-${{ matrix.service }}
           ref: main
 
-      - name: Configure AWS credentials via OIDC
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::500345929632:role/github-actions-deploy
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
