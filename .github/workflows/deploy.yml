@@ -1,0 +1,81 @@
+name: Deploy to Amazon ECS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: eu-central-1
+  ECR_REGISTRY: 500345929632.dkr.ecr.eu-central-1.amazonaws.com
+  ECS_CLUSTER: medaid-prod-cluster
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-frontend:
+    name: Build & Deploy Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout frontend repo
+        uses: actions/checkout@v4
+        with:
+          repository: sfe-gp-2-project-2-26/first-aid-frontend
+          ref: main
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::500345929632:role/github-actions-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push frontend image
+        run: |
+          docker build -t $ECR_REGISTRY/medaid/frontend:latest .
+          docker push $ECR_REGISTRY/medaid/frontend:latest
+
+      - name: Force ECS redeploy frontend
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service frontend \
+            --force-new-deployment
+
+  deploy-backends:
+    name: Build & Deploy Backend Services
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [auth-service, ai-service, map-service, bge-service]
+    steps:
+      - name: Checkout service repo
+        uses: actions/checkout@v4
+        with:
+          repository: sfe-gp-2-project-2-26/first-aid-${{ matrix.service }}
+          ref: main
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::500345929632:role/github-actions-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push ${{ matrix.service }} image
+        run: |
+          docker build -t $ECR_REGISTRY/medaid/${{ matrix.service }}:latest .
+          docker push $ECR_REGISTRY/medaid/${{ matrix.service }}:latest
+
+      - name: Force ECS redeploy ${{ matrix.service }}
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service ${{ matrix.service }} \
+            --force-new-deployment
