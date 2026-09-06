@@ -1,83 +1,55 @@
-name: Deploy to Amazon ECS
+name: Deploy to Production
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
-env:
-  AWS_REGION: eu-central-1
-  ECR_REGISTRY: 500345929632.dkr.ecr.eu-central-1.amazonaws.com
-  ECS_CLUSTER: medaid-prod-cluster
-
-permissions:
-  contents: read
-
 jobs:
-  deploy-frontend:
-    name: Build & Deploy Frontend
+  deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout frontend repo
+      - name: Checkout infra repo
         uses: actions/checkout@v4
-        with:
-          repository: sfe-gp-2-project-2-26/first-aid-frontend
-          ref: main
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and push frontend image
+      - name: Write SSH private key
         run: |
-          docker build -t $ECR_REGISTRY/medaid/frontend:latest .
-          docker push $ECR_REGISTRY/medaid/frontend:latest
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > deploy_key
+          chmod 600 deploy_key
 
-      - name: Force ECS redeploy frontend
+      - name: Copy production files to server
         run: |
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service frontend \
-            --force-new-deployment
+          scp -i deploy_key -o StrictHostKeyChecking=no \
+            docker-compose.prod.yml.tpl \
+            Caddyfile \
+            ubuntu@${{ secrets.SERVER_IP }}:/home/ubuntu/medaid/app/docker-compose.prod.yml
+          
+          scp -i deploy_key -o StrictHostKeyChecking=no \
+            Caddyfile \
+            ubuntu@${{ secrets.SERVER_IP }}:/home/ubuntu/medaid/app/Caddyfile
 
-  deploy-backends:
-    name: Build & Deploy Backend Services
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        service: [auth-service, ai-service, map-service, bge-service]
-    steps:
-      - name: Checkout service repo
-        uses: actions/checkout@v4
-        with:
-          repository: sfe-gp-2-project-2-26/first-aid-${{ matrix.service }}
-          ref: main
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and push ${{ matrix.service }} image
+      - name: Pull latest code and redeploy
         run: |
-          docker build -t $ECR_REGISTRY/medaid/${{ matrix.service }}:latest .
-          docker push $ECR_REGISTRY/medaid/${{ matrix.service }}:latest
+          ssh -i deploy_key -o StrictHostKeyChecking=no ubuntu@${{ secrets.SERVER_IP }} << 'REMOTE'
+            set -e
+            cd /home/ubuntu/medaid/app
 
-      - name: Force ECS redeploy ${{ matrix.service }}
-        run: |
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service ${{ matrix.service }} \
-            --force-new-deployment
+            # Pull latest code from all submodule services
+            git pull origin main
+            git submodule update --remote --merge
+
+            # Write env file fresh each deploy
+            cat > .env << ENV
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
+          JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
+          ENV
+
+            # Rebuild changed images and restart
+            docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+
+            # Verify all containers are running
+            sleep 10
+            docker compose -f docker-compose.prod.yml ps
+          REMOTE

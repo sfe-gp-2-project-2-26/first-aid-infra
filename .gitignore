@@ -1,5 +1,13 @@
+# Terraform
 .terraform/
-*.tfstate
-*.tfstate.backup
 .terraform.lock.hcl
-.terraform.tfstate.lock.info
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars
+
+# SSH Keys — NEVER commit private keys
+deploy_key
+deploy_key.pub
+
+# Misc
+*.log
